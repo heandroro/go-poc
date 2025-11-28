@@ -123,3 +123,47 @@ func TestReservationCreateConflictAndCheckinCheckout(t *testing.T) {
 		t.Fatalf("expected checkout 200, got %d", coRes.StatusCode)
 	}
 }
+
+func TestCheckInTooEarly(t *testing.T) {
+	_, r, _, cleanup := setupServer(t)
+	defer cleanup()
+
+	srv := httptest.NewServer(r)
+	defer srv.Close()
+
+	// Create a reservation with start_at 1 hour in the future (well beyond the 15-minute grace period)
+	start := time.Now().Add(1 * time.Hour).UTC().Truncate(time.Second)
+	end := start.Add(2 * time.Hour)
+	payload := map[string]interface{}{
+		"table_ids":        []uint{1},
+		"start_at":         start.Format(time.RFC3339),
+		"end_at":           end.Format(time.RFC3339),
+		"responsible_name": "Charlie",
+		"contact_phone":    "+5511777777777",
+		"party_size":       3,
+	}
+	b, _ := json.Marshal(payload)
+	res, err := http.Post(srv.URL+"/reservations", "application/json", bytes.NewReader(b))
+	if err != nil {
+		t.Fatalf("post reservation: %v", err)
+	}
+	if res.StatusCode != http.StatusCreated {
+		t.Fatalf("expected created, got %d", res.StatusCode)
+	}
+
+	var created models.Reservation
+	if err := json.NewDecoder(res.Body).Decode(&created); err != nil {
+		t.Fatalf("decode created: %v", err)
+	}
+
+	// Attempt to check-in NOW, which is about 1 hour before start_at (well beyond 15-minute grace period)
+	// This should fail with 400 Bad Request ("too early to check-in")
+	req, _ := http.NewRequest(http.MethodPost, srv.URL+"/reservations/"+fmt.Sprint(created.ID)+"/checkin", nil)
+	checkRes, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("checkin request failed: %v", err)
+	}
+	if checkRes.StatusCode != http.StatusBadRequest {
+		t.Fatalf("expected 400 Bad Request for too-early check-in, got %d", checkRes.StatusCode)
+	}
+}
