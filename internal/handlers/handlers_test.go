@@ -96,3 +96,35 @@ func TestFullFlow(t *testing.T) {
 		t.Fatalf("expected 1 item, got %d", len(items))
 	}
 }
+
+func TestCreateCardWithoutTableID(t *testing.T) {
+	d, err := db.New(":memory:")
+	if err != nil {
+		t.Fatalf("failed to open db: %v", err)
+	}
+
+	h := NewHandler(d)
+	r := chi.NewRouter()
+	r.Post("/cards", h.CreateCard)
+
+	ts := httptest.NewServer(r)
+	defer ts.Close()
+
+	// Attempt to create a card without table_id
+	cardPayload := map[string]interface{}{"token": "card-without-table"}
+	b, _ := json.Marshal(cardPayload)
+	resp, err := http.Post(ts.URL+"/cards", "application/json", bytes.NewReader(b))
+	if err != nil {
+		t.Fatalf("failed create card: %v", err)
+	}
+
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("expected status %d, got %d", http.StatusBadRequest, resp.StatusCode)
+	}
+
+	// Verify the error message
+	data, _ := io.ReadAll(resp.Body)
+	if string(data) != "table_id is required\n" {
+		t.Fatalf("unexpected error message: %s", string(data))
+	}
+}
