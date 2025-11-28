@@ -123,3 +123,97 @@ func TestReservationCreateConflictAndCheckinCheckout(t *testing.T) {
 		t.Fatalf("expected checkout 200, got %d", coRes.StatusCode)
 	}
 }
+
+func TestGetReservation(t *testing.T) {
+	_, r, _, cleanup := setupServer(t)
+	defer cleanup()
+
+	srv := httptest.NewServer(r)
+	defer srv.Close()
+
+	// create a reservation for tables 1 and 2
+	start := time.Now().Add(1 * time.Hour).UTC().Truncate(time.Second)
+	end := start.Add(2 * time.Hour)
+	payload := map[string]interface{}{
+		"table_ids":        []uint{1, 2},
+		"start_at":         start.Format(time.RFC3339),
+		"end_at":           end.Format(time.RFC3339),
+		"responsible_name": "Alice",
+		"contact_phone":    "+5511999999999",
+		"party_size":       6,
+	}
+	b, _ := json.Marshal(payload)
+	createRes, err := http.Post(srv.URL+"/reservations", "application/json", bytes.NewReader(b))
+	if err != nil {
+		t.Fatalf("post reservation: %v", err)
+	}
+	if createRes.StatusCode != http.StatusCreated {
+		t.Fatalf("expected created, got %d", createRes.StatusCode)
+	}
+
+	// decode the created reservation to get its ID
+	var created models.Reservation
+	if err := json.NewDecoder(createRes.Body).Decode(&created); err != nil {
+		t.Fatalf("decode created: %v", err)
+	}
+
+	// GET the reservation by ID
+	getRes, err := http.Get(srv.URL + "/reservations/" + fmt.Sprint(created.ID))
+	if err != nil {
+		t.Fatalf("get reservation: %v", err)
+	}
+	if getRes.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", getRes.StatusCode)
+	}
+
+	// decode and verify the response
+	var fetched models.Reservation
+	if err := json.NewDecoder(getRes.Body).Decode(&fetched); err != nil {
+		t.Fatalf("decode fetched: %v", err)
+	}
+
+	// verify reservation data
+	if fetched.ID != created.ID {
+		t.Errorf("expected ID %d, got %d", created.ID, fetched.ID)
+	}
+	if fetched.ResponsibleName != "Alice" {
+		t.Errorf("expected ResponsibleName 'Alice', got %q", fetched.ResponsibleName)
+	}
+	if fetched.ContactPhone != "+5511999999999" {
+		t.Errorf("expected ContactPhone '+5511999999999', got %q", fetched.ContactPhone)
+	}
+	if fetched.PartySize != 6 {
+		t.Errorf("expected PartySize 6, got %d", fetched.PartySize)
+	}
+
+	// verify tables are preloaded
+	if len(fetched.Tables) != 2 {
+		t.Fatalf("expected 2 preloaded tables, got %d", len(fetched.Tables))
+	}
+
+	// verify table names
+	tableNames := make(map[string]bool)
+	for _, tbl := range fetched.Tables {
+		tableNames[tbl.Name] = true
+	}
+	if !tableNames["T1"] || !tableNames["T2"] {
+		t.Errorf("expected tables T1 and T2, got %v", fetched.Tables)
+	}
+}
+
+func TestGetReservationNotFound(t *testing.T) {
+	_, r, _, cleanup := setupServer(t)
+	defer cleanup()
+
+	srv := httptest.NewServer(r)
+	defer srv.Close()
+
+	// GET a non-existent reservation
+	getRes, err := http.Get(srv.URL + "/reservations/99999")
+	if err != nil {
+		t.Fatalf("get reservation: %v", err)
+	}
+	if getRes.StatusCode != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d", getRes.StatusCode)
+	}
+}
