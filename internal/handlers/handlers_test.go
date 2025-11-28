@@ -96,3 +96,68 @@ func TestFullFlow(t *testing.T) {
 		t.Fatalf("expected 1 item, got %d", len(items))
 	}
 }
+
+func TestGetTable(t *testing.T) {
+	d, err := db.New(":memory:")
+	if err != nil {
+		t.Fatalf("failed to open db: %v", err)
+	}
+
+	h := NewHandler(d)
+	r := chi.NewRouter()
+	r.Post("/tables", h.CreateTable)
+	r.Get("/tables/{id}", h.GetTable)
+
+	ts := httptest.NewServer(r)
+	defer ts.Close()
+
+	// 1. Create a table
+	tablePayload := map[string]interface{}{"name": "Test Table", "status": "free"}
+	b, _ := json.Marshal(tablePayload)
+	resp, err := http.Post(ts.URL+"/tables", "application/json", bytes.NewReader(b))
+	if err != nil {
+		t.Fatalf("failed to create table: %v", err)
+	}
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("unexpected status on create: %d", resp.StatusCode)
+	}
+
+	data, _ := io.ReadAll(resp.Body)
+	var createdTable models.Table
+	if err := json.Unmarshal(data, &createdTable); err != nil {
+		t.Fatalf("invalid table json: %v", err)
+	}
+
+	// 2. Get the table by ID
+	tableIDStr := strconv.Itoa(int(createdTable.ID))
+	resp, err = http.Get(ts.URL + "/tables/" + tableIDStr)
+	if err != nil {
+		t.Fatalf("failed to get table: %v", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("unexpected status on get: %d", resp.StatusCode)
+	}
+
+	data, _ = io.ReadAll(resp.Body)
+	var fetchedTable models.Table
+	if err := json.Unmarshal(data, &fetchedTable); err != nil {
+		t.Fatalf("invalid fetched table json: %v", err)
+	}
+
+	// 3. Verify the fetched table matches the created table
+	if fetchedTable.ID != createdTable.ID {
+		t.Errorf("expected table ID %d, got %d", createdTable.ID, fetchedTable.ID)
+	}
+	if fetchedTable.Name != createdTable.Name {
+		t.Errorf("expected table name %q, got %q", createdTable.Name, fetchedTable.Name)
+	}
+
+	// 4. Test GetTable with non-existent ID returns 404
+	resp, err = http.Get(ts.URL + "/tables/9999")
+	if err != nil {
+		t.Fatalf("failed to get non-existent table: %v", err)
+	}
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("expected 404 for non-existent table, got %d", resp.StatusCode)
+	}
+}
